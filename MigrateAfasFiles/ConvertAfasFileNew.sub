@@ -4,47 +4,30 @@ Public Sub ConvertAfasFileNew(nIn As Long, nOut As Long, srcFile As scripting.fi
     Dim strFileOut As String
     Dim i As Long
     
-    Dim nInEnc As String, nOutEnc As String, nTemp
-    If nIn > 100 Then
-        nTemp = nIn - 100
-        nInEnc = "_A" & CStr(nTemp)
-    Else
-        nInEnc = "S" & VBA.Format(nIn, "00")
-    End If
-    If nOut > 100 Then
-        nTemp = nIn - 100
-        nOutEnc = "_A" & CStr(nTemp)
-    Else
-        nOutEnc = "S" & VBA.Format(nOut, "00")
-    End If
+    Dim nInEnc As String, nOutEnc As String
+    
+    ' Gebruik de nieuwe logica voor de AFAS codering
+    nInEnc = GetAfasSuffix(nIn)
+    nOutEnc = GetAfasSuffix(nOut)
     
     strFileIn = srcFile.Path
-    strFileOut = trgtFolder & IIf(VBA.Right(trgtFolder, 1) <> "\", "\", "") & VBA.Replace(VBA.Replace(srcFile.Name, VBA.Format(VBA.CStr(nIn), "00"), VBA.Format(VBA.CStr(nOut), "00")), "Vrij bestand " & nIn, "Vrij bestand " & nOut)
+    
+    ' Bestandsnaam logica aanpassen: we vervangen de oude code door de nieuwe code in de naam
+    strFileOut = trgtFolder & IIf(VBA.Right(trgtFolder, 1) <> "\", "\", "")
+    strFileOut = strFileOut & VBA.Replace(srcFile.Name, nInEnc, nOutEnc)
+    ' Extra veiligheid voor de "Vrij bestand x" tekst in de naam
+    strFileOut = VBA.Replace(strFileOut, "Vrij bestand " & nIn, "Vrij bestand " & nOut)
 
     Dim binIn, binOut() As Byte
-    
     Dim f, bin() As Byte
     f = FreeFile
+    
     Open strFileIn For Binary As #f
         ReDim bin(LOF(f) - 1)
         Get #f, , bin
     Close #f
 
-'    Dim wb As Workbook, ws As Worksheet, r As Long, c As Long
-'
-'    Set wb = ActiveWorkbook
-'    Set ws = wb.Sheets(1)
-'    ws.Cells.ClearContents
-'
-'
-'    For i = 0 To UBound(bin)
-'        r = i + 1
-'        ws.Cells(r, 1).value = i
-'        ws.Cells(r, 2).value = bin(i)
-'        ws.Cells(r, 3).value = Chr(bin(i))
-'    Next i
-
-
+    ' --- De rest van je bestaande logica voor binSections ---
     Dim binHeader, binSection, binSections As New Collection, binSectionsOut As New Collection
     ReDim binHeader(0)
     ReDim binSection(0)
@@ -69,11 +52,11 @@ Public Sub ConvertAfasFileNew(nIn As Long, nOut As Long, srcFile As scripting.fi
             binSection(UBound(binSection)) = bin(i)
             
         End If
-    Next i
-    
+    Next i    
     f = 0
     For Each binSection In binSections
         f = f + 1
+        ' De vergelijking gebruikt nu de correcte 3-cijferige suffix (bijv. I_A0)
         If UBound(binSection) = VBA.Len("I" & nInEnc) - 1 And bin2val(binSection) = "I" & nInEnc Then
             nTemp = ""
             For i = 0 To UBound(binSection)
@@ -88,6 +71,7 @@ Public Sub ConvertAfasFileNew(nIn As Long, nOut As Long, srcFile As scripting.fi
         binSectionsOut.Add binSection, CStr(f)
     Next binSection
     
+    ' Header update (posities 29-31 bevatten vaak de Sxx of _Ax code)
     j = 0
     For i = 29 To 31
         j = j + 1
@@ -129,7 +113,6 @@ Public Sub ConvertAfasFileNew(nIn As Long, nOut As Long, srcFile As scripting.fi
     f = FreeFile
     Open strFileOut For Binary As #f
         Put #f, , binOut
-        'Put #f, 1, binOut
     Close #f
         
 End Sub
