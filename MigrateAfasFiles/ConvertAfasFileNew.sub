@@ -1,0 +1,135 @@
+Public Sub ConvertAfasFileNew(nIn As Long, nOut As Long, srcFile As scripting.file, trgtFolder As String)
+
+    Dim strFileIn As String
+    Dim strFileOut As String
+    Dim i As Long
+    
+    Dim nInEnc As String, nOutEnc As String, nTemp
+    If nIn > 100 Then
+        nTemp = nIn - 100
+        nInEnc = "_A" & CStr(nTemp)
+    Else
+        nInEnc = "S" & VBA.Format(nIn, "00")
+    End If
+    If nOut > 100 Then
+        nTemp = nIn - 100
+        nOutEnc = "_A" & CStr(nTemp)
+    Else
+        nOutEnc = "S" & VBA.Format(nOut, "00")
+    End If
+    
+    strFileIn = srcFile.Path
+    strFileOut = trgtFolder & IIf(VBA.Right(trgtFolder, 1) <> "\", "\", "") & VBA.Replace(VBA.Replace(srcFile.Name, VBA.Format(VBA.CStr(nIn), "00"), VBA.Format(VBA.CStr(nOut), "00")), "Vrij bestand " & nIn, "Vrij bestand " & nOut)
+
+    Dim binIn, binOut() As Byte
+    
+    Dim f, bin() As Byte
+    f = FreeFile
+    Open strFileIn For Binary As #f
+        ReDim bin(LOF(f) - 1)
+        Get #f, , bin
+    Close #f
+
+'    Dim wb As Workbook, ws As Worksheet, r As Long, c As Long
+'
+'    Set wb = ActiveWorkbook
+'    Set ws = wb.Sheets(1)
+'    ws.Cells.ClearContents
+'
+'
+'    For i = 0 To UBound(bin)
+'        r = i + 1
+'        ws.Cells(r, 1).value = i
+'        ws.Cells(r, 2).value = bin(i)
+'        ws.Cells(r, 3).value = Chr(bin(i))
+'    Next i
+
+
+    Dim binHeader, binSection, binSections As New Collection, binSectionsOut As New Collection
+    ReDim binHeader(0)
+    ReDim binSection(0)
+    Dim j As Long
+    f = 0
+    For i = 0 To UBound(bin)
+        If f = 0 Then
+            If binHeader(UBound(binHeader)) <> "" Then ReDim Preserve binHeader(UBound(binHeader) + 1)
+            binHeader(UBound(binHeader)) = bin(i)
+        End If
+        If bin(i) = 64 Then
+            If f > 0 Then
+                binSections.Add binSection, CStr(f)
+                ReDim binSection(0)
+            End If
+            f = f + 1
+            i = i + 1
+            If i > UBound(bin) Then Exit For
+        End If
+        If f > 0 Then
+            If binSection(UBound(binSection)) <> "" Then ReDim Preserve binSection(UBound(binSection) + 1)
+            binSection(UBound(binSection)) = bin(i)
+            
+        End If
+    Next i
+    
+    f = 0
+    For Each binSection In binSections
+        f = f + 1
+        If UBound(binSection) = VBA.Len("I" & nInEnc) - 1 And bin2val(binSection) = "I" & nInEnc Then
+            nTemp = ""
+            For i = 0 To UBound(binSection)
+                nTemp = nTemp & VBA.Chr(binSection(i))
+            Next i
+            If nTemp = "I" & nInEnc Then
+                For i = 0 To UBound(binSection)
+                    binSection(i) = VBA.Asc(VBA.Mid("I" & nOutEnc, i + 1, 1))
+                Next i
+            End If
+        End If
+        binSectionsOut.Add binSection, CStr(f)
+    Next binSection
+    
+    j = 0
+    For i = 29 To 31
+        j = j + 1
+        binHeader(i) = VBA.Asc(VBA.Mid(nOutEnc, j, 1))
+    Next i
+    
+    j = 0
+    Dim cTemp As String
+    cTemp = VBA.Left(VBA.CStr(nOut) & Chr(32) & Chr(32), 3)
+    For i = 52 To 54
+        j = j + 1
+        If binHeader(i) >= 48 And binHeader(i) <= 57 Then 'only numbers
+            binHeader(i) = VBA.Asc(VBA.Mid(cTemp, j, 1))
+        End If
+    Next i
+    
+    ReDim binOut(UBound(bin))
+    j = 0
+    For i = 0 To UBound(binHeader)
+        binOut(j) = binHeader(i)
+        j = j + 1
+    Next i
+    For Each binSection In binSectionsOut
+        For i = 0 To UBound(binSection)
+            If i = 0 And binOut(j - 1) <> 64 Then
+                binOut(j) = 64
+                j = j + 1
+            End If
+            binOut(j) = binSection(i)
+            j = j + 1
+        Next i
+    Next binSection
+    
+    For i = UBound(bin) To 0 Step -1
+        If i < UBound(bin) And binOut(i) = bin(i) Then Exit For
+        binOut(i) = bin(i)
+    Next i
+    
+    f = FreeFile
+    Open strFileOut For Binary As #f
+        Put #f, , binOut
+        'Put #f, 1, binOut
+    Close #f
+        
+End Sub
