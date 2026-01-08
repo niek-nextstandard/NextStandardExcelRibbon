@@ -1,0 +1,352 @@
+Option Explicit
+
+Private Const useFileExt As String = ".fie"
+
+Private Function processFile(srcFile As scripting.file) As Boolean
+
+    Dim temp
+    Dim ext As String
+    ext = "." & VBA.Split(srcFile.Name, ".")(UBound(VBA.Split(srcFile.Name, ".")))
+    temp = VBA.Split(useFileExt, ";")
+    temp = Filter(temp, ext, True, vbTextCompare)
+    processFile = UBound(temp) = 0
+
+End Function
+
+
+Public Sub ConvertAfasFiles(Optional cntrl As IRibbonControl)
+
+    Dim srcFolderPath As String, trgtFolderPath As String, trgtFolderPathSuggest As String, antwoord As VbMsgBoxResult
+    Dim cIn As String, nIn As Long
+    Dim cOut As String, nOut As Long
+    
+    Dim s As Long, e As Long
+    
+    srcFolderPath = SelectFolder(CurDir(), "Selecteer de map met bron bestanden")
+    If srcFolderPath = Empty Then Exit Sub
+    cIn = InputBox("Nummer van bron", "Bron")
+    
+    cOut = InputBox("Nieuw nummer", "Doel")
+    If cIn = Empty Or cOut = Empty Then Exit Sub
+    On Error Resume Next
+    
+    
+    
+    nIn = VBA.CLng(cIn)
+    nOut = VBA.CLng(cOut)
+    If err.Number <> 0 Then
+        MsgBox "Er is geen numerieke waarde ingevoerd.", vbOKOnly + vbCritical, "Fout"
+        Exit Sub
+    End If
+    On Error GoTo 0
+    
+    trgtFolderPathSuggest = VBA.Replace(srcFolderPath, LaatsteWaarde(srcFolderPath, "\"), VBA.Replace(LaatsteWaarde(srcFolderPath, "\"), cIn, cOut))
+    
+    FolderExists trgtFolderPathSuggest, True
+    
+    Do
+        
+        If trgtFolderPath <> Empty Then
+            antwoord = MsgBox("Selecteer een andere map dan de bron.", vbOKCancel + vbExclamation, "Andere map")
+            If antwoord = vbCancel Then Exit Sub
+        End If
+        trgtFolderPath = SelectFolder(trgtFolderPathSuggest, "Selecteer de map waar je de nieuwe bestanden wilt opslaan")
+        If trgtFolderPath = Empty Then Exit Sub
+    Loop While trgtFolderPath = srcFolderPath
+    
+    Dim file As scripting.file
+    For Each file In FSO.GetFolder(srcFolderPath).files
+        On Error GoTo fileerror
+        If processFile(file) Then
+            s = s + 1
+            ConvertAfasFile nIn, nOut, file, trgtFolderPath
+        Else
+returnfileerror:
+            e = e + 1
+                
+        End If
+        On Error GoTo 0
+    Next file
+    
+    MsgBox _
+        "Er " & _
+        IIf(s = 1, "is 1 bestand", "zijn " & s & " bestanden") & " geconverteerd." & _
+        IIf(e > 0, vbCrLf & vbCrLf & _
+            "Er " & IIf(e = 1, "is 1 bestand", "zijn " & e & " bestanden") & " NIET geconverteerd." _
+        , ""), vbOKOnly + vbInformation, "Gereed"
+            
+    
+Exit Sub
+fileerror:
+    s = s - 1
+    Resume returnfileerror
+End Sub
+
+
+
+Public Sub ConvertAfasFile(nIn As Long, nOut As Long, srcFile As scripting.file, trgtFolder As String)
+
+    Dim strFileIn As String
+    Dim strFileOut As String
+    Dim i As Long
+    Dim nTemp As String
+    
+    Dim nInEnc As String, nOutEnc As String
+    
+    ' Gebruik de nieuwe logica voor de AFAS codering
+    nInEnc = GetAfasSuffix(nIn)
+    nOutEnc = GetAfasSuffix(nOut)
+    
+    strFileIn = srcFile.Path
+    
+    ' Bestandsnaam logica aanpassen: we vervangen de oude code door de nieuwe code in de naam
+    strFileOut = trgtFolder & IIf(VBA.Right(trgtFolder, 1) <> "\", "\", "")
+    strFileOut = strFileOut & VBA.Replace(srcFile.Name, nIn, nOut)
+    ' Extra veiligheid voor de "Vrij bestand x" tekst in de naam
+    strFileOut = VBA.Replace(strFileOut, "Vrij bestand " & nIn, "Vrij bestand " & nOut)
+
+    Dim binIn, binOut() As Byte
+    Dim f, bin() As Byte
+    f = FreeFile
+    
+    Open strFileIn For Binary As #f
+        ReDim bin(LOF(f) - 1)
+        Get #f, , bin
+    Close #f
+
+    ' --- De rest van je bestaande logica voor binSections ---
+    Dim binHeader, binSection, binSections As New Collection, binSectionsOut As New Collection
+    ReDim binHeader(0)
+    ReDim binSection(0)
+    Dim j As Long
+    f = 0
+    For i = 0 To UBound(bin)
+        If f = 0 Then
+            If binHeader(UBound(binHeader)) <> "" Then ReDim Preserve binHeader(UBound(binHeader) + 1)
+            binHeader(UBound(binHeader)) = bin(i)
+        End If
+        If bin(i) = 64 Then
+            If f > 0 Then
+                binSections.Add binSection, CStr(f)
+                ReDim binSection(0)
+            End If
+            f = f + 1
+            i = i + 1
+            If i > UBound(bin) Then Exit For
+        End If
+        If f > 0 Then
+            If binSection(UBound(binSection)) <> "" Then ReDim Preserve binSection(UBound(binSection) + 1)
+            binSection(UBound(binSection)) = bin(i)
+            
+        End If
+    Next i
+    f = 0
+    For Each binSection In binSections
+        f = f + 1
+        ' De vergelijking gebruikt nu de correcte 3-cijferige suffix (bijv. I_A0)
+        If UBound(binSection) = VBA.Len("I" & nInEnc) - 1 And bin2val(binSection) = "I" & nInEnc Then
+            nTemp = ""
+            For i = 0 To UBound(binSection)
+                nTemp = nTemp & VBA.Chr(binSection(i))
+            Next i
+            If nTemp = "I" & nInEnc Then
+                For i = 0 To UBound(binSection)
+                    binSection(i) = VBA.Asc(VBA.Mid("I" & nOutEnc, i + 1, 1))
+                Next i
+            End If
+        End If
+        binSectionsOut.Add binSection, CStr(f)
+    Next binSection
+    
+    ' Header update (posities 29-31 bevatten vaak de Sxx of _Ax code)
+    j = 0
+    For i = 29 To 31
+        j = j + 1
+        binHeader(i) = VBA.Asc(VBA.Mid(nOutEnc, j, 1))
+    Next i
+    
+    j = 0
+    Dim cTemp As String
+    cTemp = VBA.Left(VBA.CStr(nOut) & Chr(32) & Chr(32), 3)
+    For i = 52 To 54
+        j = j + 1
+        If binHeader(i) >= 48 And binHeader(i) <= 57 Then 'only numbers
+            binHeader(i) = VBA.Asc(VBA.Mid(cTemp, j, 1))
+        End If
+    Next i
+    
+    ReDim binOut(UBound(bin))
+    j = 0
+    For i = 0 To UBound(binHeader)
+        binOut(j) = binHeader(i)
+        j = j + 1
+    Next i
+    For Each binSection In binSectionsOut
+        For i = 0 To UBound(binSection)
+            If i = 0 And binOut(j - 1) <> 64 Then
+                binOut(j) = 64
+                j = j + 1
+            End If
+            binOut(j) = binSection(i)
+            j = j + 1
+        Next i
+    Next binSection
+    
+    For i = UBound(bin) To 0 Step -1
+        If i < UBound(bin) And binOut(i) = bin(i) Then Exit For
+        binOut(i) = bin(i)
+    Next i
+    
+    f = FreeFile
+    Open strFileOut For Binary As #f
+        Put #f, , binOut
+    Close #f
+        
+End Sub
+
+Private Function GetAfasSuffix(ByVal n As Long) As String
+    Dim blockIndex As Long
+    Dim remainder As Long
+    Dim firstChar As String
+    Dim secondChar As String
+    
+    If n < 100 Then
+        GetAfasSuffix = "S" & Format(n, "00")
+    Else
+        ' Bepaal de hoofdletter (A, B, C...)
+        blockIndex = Int((n - 100) / 36)
+        firstChar = Chr(65 + blockIndex)
+        
+        ' Bepaal het tweede teken (0-9, a-z)
+        remainder = (n - 100) Mod 36
+        If remainder < 10 Then
+            secondChar = CStr(remainder)
+        Else
+            secondChar = Chr(87 + remainder) ' 87 + 10 = 97 (ASCII 'a')
+        End If
+        
+        GetAfasSuffix = "_" & firstChar & secondChar
+    End If
+End Function
+
+
+
+Private Function hexStringArray2binStringArray(hexStringArrayIn) As Variant
+    Dim temp, temp2, byteVal As Long
+    temp = hexStringArrayIn
+    Dim l As Long, i As Long
+    For l = 0 To UBound(temp)
+        temp2 = VBA.Split(temp(l), " ")
+        For i = 0 To UBound(temp2)
+            byteVal = val("&H" & temp2(i))
+            temp2(i) = byteVal
+        Next i
+        temp(l) = VBA.Join(temp2, " ")
+    Next l
+    hexStringArray2binStringArray = temp
+        
+End Function
+Private Function preOptions() As Variant
+    Const preOptionsString As String = "73 83;32;4b 6e 09 03 4b;49 4b;56 72 69 6a 20 62 65 73 74 61 6e 64 20;4b 6e 09 03 53;56 72 69 6a 20 64 6f 73 73 69 65 72 69 74 65 6d 3a 20;4b 6e 40 49 53"
+    Dim temp
+    temp = VBA.Split(VBA.UCase(preOptionsString), ";")
+    preOptions = hexStringArray2binStringArray(temp)
+End Function
+
+
+
+Function ReadBinFile(strPath As String)
+
+
+    Dim f As Long
+    Dim bin() As Byte, strBin As String
+    Dim bin2 As Byte
+    
+ 
+    
+    f = FreeFile
+    Open strPath For Binary As #f
+        ReDim bin(LOF(f) - 1)
+        Get #f, , bin
+    Close #f
+  
+    ReadBinFile = bin
+
+
+End Function
+
+Sub WriteBinFile(bin, trgFile As String)
+
+    Dim fldrPath As String, f As Long
+    Dim temp
+    temp = VBA.Split(trgFile, "\")
+    ReDim Preserve temp(0 To UBound(temp) - 1)
+    
+    fldrPath = VBA.Join(temp, "\")
+    
+    If FolderExists(fldrPath, True) Then
+        f = FreeFile
+        Open trgFile For Binary As #f
+            Put #f, 1, bin
+        Close #f
+    End If
+
+End Sub
+
+Function convert(bin, in_ As Long, out_ As Long)
+
+    Dim cIn() As Long, cOut() As Long
+    
+    ReDim cIn(0 To Len(VBA.CStr(in_)) - 1)
+    ReDim cOut(0 To Len(VBA.CStr(out_)) - 1)
+
+    Dim i As Long, c As String
+    For i = 0 To UBound(cIn)
+        c = VBA.Mid(CStr(in_), i + 1, 1)
+        cIn(i) = WorksheetFunction.Hex2Dec(VBA.CLng("3" & c))
+    Next i
+    
+    For i = 0 To UBound(cOut)
+        c = VBA.Mid(CStr(out_), i + 1, 1)
+        cOut(i) = WorksheetFunction.Hex2Dec(VBA.CLng("3" & c))
+    Next i
+
+    Dim str0 As String, str1 As String
+    str0 = bin2str(bin)
+    str1 = VBA.Replace(str0, bin2str(cIn), bin2str(cOut))
+    convert = str2bin(str1)
+
+
+End Function
+
+Function bin2str(bin) As String
+
+    Dim i As Long, myStr As String
+    For i = 0 To UBound(bin)
+        If myStr <> Empty Then myStr = myStr & " "
+        myStr = myStr & bin(i)
+    Next i
+    bin2str = myStr
+
+End Function
+Function bin2val(bin) As String
+
+    Dim i As Long, myStr As String
+    For i = 0 To UBound(bin)
+        myStr = myStr & Chr(bin(i))
+    Next i
+    bin2val = myStr
+
+End Function
+
+Function str2bin(str As String)
+
+    Dim i As Long, myArr() As String, bin() As Byte
+    myArr = VBA.Split(str, " ")
+    ReDim bin(0 To UBound(myArr))
+    For i = 0 To UBound(myArr)
+        bin(i) = VBA.CLng(myArr(i))
+    Next i
+    str2bin = bin
+    
+End Function
